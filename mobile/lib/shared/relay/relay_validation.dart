@@ -25,7 +25,15 @@ void validateInviteRelayUri(
 
   final host = uri.host.toLowerCase();
   final isLocalhost = host == 'localhost' || host.endsWith('.localhost');
-  if (uri.scheme != 'wss' && !(allowInsecureLocalhost && isLocalhost)) {
+  // Plaintext ws:// is allowed for non-public (RFC1918 / tunnel) destinations
+  // in every build, so WireGuard-tunnel relays work without TLS. Public
+  // destinations still require wss:// in release builds; debug builds accept
+  // plaintext ws:// to any host.
+  final parsedAddress = InternetAddress.tryParse(host);
+  final isPrivateDestination =
+      parsedAddress != null && !_isPublicAddress(parsedAddress);
+  if (uri.scheme != 'wss' &&
+      !(allowInsecureLocalhost || isPrivateDestination)) {
     throw const FormatException('Relay URL must use WSS');
   }
   if (isLocalhost) {
@@ -35,7 +43,7 @@ void validateInviteRelayUri(
     return;
   }
 
-  final address = InternetAddress.tryParse(host);
+  final address = parsedAddress;
   if (_looksLikeNumericAddress(host)) {
     // Only canonical dotted-decimal IPv4 is accepted. Ambiguous legacy forms
     // such as a single integer, hexadecimal, shortened components, or leading
@@ -53,7 +61,10 @@ void validateInviteRelayUri(
     }
   }
   if (address != null) {
-    if (!_isPublicAddress(address)) {
+    // Plaintext ws:// to a non-public (tunnel / RFC1918) destination is
+    // allowed in every build; wss:// keeps the strict public-only rule.
+    if (!_isPublicAddress(address) &&
+        !(uri.scheme == 'ws' && isPrivateDestination)) {
       throw const FormatException(
         'Relay URL cannot target non-public network addresses',
       );

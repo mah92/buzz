@@ -1,0 +1,39 @@
+// Added: mirror repos for the composite build of flutter_tools gradle plugin
+// (dl.google.com geo-blocked on this network)
+beforeSettings { settings ->
+    settings.pluginManagement {
+        repositories {
+            it.maven { url = uri('https://maven.aliyun.com/repository/google') }
+            it.maven { url = uri('https://maven.aliyun.com/repository/public') }
+            it.maven { url = uri('https://maven.aliyun.com/repository/gradle-plugin') }
+        }
+    }
+    settings.dependencyResolutionManagement {
+        repositories {
+            it.maven { url = uri('https://maven.aliyun.com/repository/google') }
+            it.maven { url = uri('https://maven.aliyun.com/repository/public') }
+        }
+    }
+}
+// io.flutter engine artifacts live on GCS (geo-blocked) — add CN mirror to every project.
+// Injected INSIDE the settings evaluation (afterEvaluate via projectsLoaded) to avoid
+// the FAIL_ON_PROJECT_REPOS settings-vs-project conflict: add to project repos only
+// for projects that opt OUT of settings repos (the root :app uses project repos? No —
+// flutter app uses dependencyResolutionManagement? It doesn't; keep allprojects but run
+// it after settings are consumed.
+gradle.projectsLoaded {
+    gradle.rootProject.allprojects { proj ->
+        proj.afterEvaluate {
+            // applied post-evaluation is too late for resolution; use repositories at config time
+        }
+    }
+}
+gradle.beforeProject { proj ->
+    if (proj.path == ':app') {
+        proj.repositories {
+            it.maven { url = uri('https://maven.aliyun.com/repository/google') }
+            it.maven { url = uri('https://maven.aliyun.com/repository/public') }
+            it.maven { url = uri('https://storage.flutter-io.cn/download.flutter.io') }
+        }
+    }
+}

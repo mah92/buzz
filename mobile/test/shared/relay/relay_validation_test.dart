@@ -157,5 +157,34 @@ void main() {
         );
       }
     });
+    test('allows plaintext ws:// to private tunnel addresses (WireGuard)', () {
+      for (final url in [
+        'ws://10.66.0.1:3000',
+        'ws://192.168.1.10:3000',
+        'ws://172.18.0.1:3000',
+      ]) {
+        expect(
+          () => validateInviteRelayUri(
+            Uri.parse(url),
+            allowInsecureLocalhost: false,
+          ),
+          returnsNormally,
+          reason: url,
+        );
+      }
+    });
+
+    test('still rejects plaintext ws:// to public relays in release', () {
+      for (final url in ['ws://8.8.8.8:3000', 'ws://194.60.230.106:3000']) {
+        expect(
+          () => validateInviteRelayUri(
+            Uri.parse(url),
+            allowInsecureLocalhost: false,
+          ),
+          throwsFormatException,
+          reason: url,
+        );
+      }
+    });
   });
 }

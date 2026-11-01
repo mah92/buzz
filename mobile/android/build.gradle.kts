@@ -1,5 +1,9 @@
 allprojects {
     repositories {
+        // Aliyun mirrors first (dl.google.com geo-blocked on this network)
+        maven("https://maven.aliyun.com/repository/google")
+        maven("https://maven.aliyun.com/repository/public")
+        maven("https://storage.flutter-io.cn/download.flutter.io")
         google()
         mavenCentral()
     }

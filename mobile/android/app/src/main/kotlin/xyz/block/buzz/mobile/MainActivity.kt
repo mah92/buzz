@@ -1,7 +1,5 @@
 package xyz.block.buzz.mobile
 
-import android.content.Intent
-
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
@@ -12,13 +10,6 @@ import android.media.MediaMetadataRetriever
 import android.media.MediaMuxer
 import android.os.Build
 import androidx.annotation.RequiresApi
-import com.google.android.play.agesignals.AgeSignalsException
-import com.google.android.play.agesignals.model.AgeSignalsErrorCode
-import com.google.android.play.agesignals.AgeSignalsAccessRequest
-import com.google.android.play.agesignals.AgeSignalsManager
-import com.google.android.play.agesignals.AgeSignalsManagerFactory
-import com.google.android.play.agesignals.AgeSignalsRequest
-import com.google.android.play.agesignals.model.AgeSignalsStatus
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -27,43 +18,12 @@ import java.io.File
 import java.nio.ByteBuffer
 import java.util.UUID
 
-internal fun ageSignalPayload(ageUpper: Int?): Map<String, Any?> {
-    return mapOf(
-        "status" to "signal",
-        "ageUpper" to ageUpper,
-    )
-}
-
+// Google Play age-signals removed: this build does not depend on Google Play
+// services. The channel always reports "noSignal" so the age gate stays open.
 internal fun noAgeSignalPayload(): Map<String, Any?> {
     return mapOf(
         "status" to "noSignal",
         "ageUpper" to null,
-    )
-}
-
-internal fun replyWithAgeSignalError(
-    result: MethodChannel.Result,
-    error: Exception,
-) {
-    // Missing/outdated Play installations and non-Play installs cannot supply
-    // a signal. Preserve Buzz's unsupported-environment no-signal policy.
-    // Transport, binding, SDK integration, and unknown failures stay gated.
-    if (error is AgeSignalsException && error.errorCode in setOf(
-            AgeSignalsErrorCode.API_NOT_AVAILABLE,
-            AgeSignalsErrorCode.PLAY_STORE_NOT_FOUND,
-            AgeSignalsErrorCode.PLAY_SERVICES_NOT_FOUND,
-            AgeSignalsErrorCode.PLAY_STORE_VERSION_OUTDATED,
-            AgeSignalsErrorCode.PLAY_SERVICES_VERSION_OUTDATED,
-            AgeSignalsErrorCode.APP_NOT_OWNED,
-        )
-    ) {
-        result.success(noAgeSignalPayload())
-        return
-    }
-    result.error(
-        "age_signal_unavailable",
-        "The age signal request failed.",
-        error.javaClass.simpleName,
     )
 }
 
@@ -129,8 +89,6 @@ internal object AndroidImageProcessor {
 class MainActivity : FlutterFragmentActivity() {
     private var mediaUploadChannel: MethodChannel? = null
     private var ageSignalChannel: MethodChannel? = null
-    private var ageSignalRequestGeneration = 0
-    private var pendingAgeSignalResult: MethodChannel.Result? = null
     private var huddleMediaPlugin: HuddleMediaPlugin? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -170,6 +128,9 @@ class MainActivity : FlutterFragmentActivity() {
             }
         }
 
+        // Google Play age-signals removed. The channel stays registered so the
+        // Dart age gate resolves immediately without Play services: every
+        // request reports "noSignal" (treated as "allowed" on the Dart side).
         ageSignalChannel = MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             AGE_SIGNAL_CHANNEL,
@@ -177,99 +138,14 @@ class MainActivity : FlutterFragmentActivity() {
             channel.setMethodCallHandler { call, result ->
                 when (call.method) {
                     REQUEST_AGE_SIGNAL_METHOD -> {
-                        handleRequestAgeSignal(
-                            AgeSignalsManagerFactory.create(applicationContext),
-                            result,
-                        )
+                        result.success(noAgeSignalPayload())
                     }
-                    CANCEL_AGE_SIGNAL_METHOD -> cancelAgeSignalRequest(result)
-                    RESTART_AGE_SIGNAL_METHOD -> restartForAgeSignal(result)
+                    CANCEL_AGE_SIGNAL_METHOD -> result.success(false)
+                    RESTART_AGE_SIGNAL_METHOD -> result.success(false)
                     else -> result.notImplemented()
                 }
             }
         }
-    }
-
-    private fun handleRequestAgeSignal(
-        ageSignalsManager: AgeSignalsManager,
-        result: MethodChannel.Result,
-    ) {
-        if (pendingAgeSignalResult != null) {
-            result.error("age_signal_in_flight", "An age signal request is already active.", null)
-            return
-        }
-        ageSignalRequestGeneration += 1
-        val generation = ageSignalRequestGeneration
-        pendingAgeSignalResult = result
-        val accessRequest = AgeSignalsAccessRequest.builder()
-            .setActivity(this)
-            .build()
-        ageSignalsManager.requestAgeSignalsAccess(accessRequest)
-            .addOnSuccessListener { accessResult ->
-                if (accessResult.ageSignalsStatus() != AgeSignalsStatus.SHARED) {
-                    completeAgeSignalRequest(generation, result) { replyWithNoAgeSignal(result) }
-                    return@addOnSuccessListener
-                }
-
-                ageSignalsManager.checkAgeSignals(AgeSignalsRequest.builder().build())
-                    .addOnSuccessListener { ageSignalsResult ->
-                        completeAgeSignalRequest(generation, result) {
-                            replyWithAgeSignal(result, ageSignalsResult.ageUpper())
-                        }
-                    }
-                    .addOnFailureListener { error ->
-                        completeAgeSignalRequest(generation, result) {
-                            replyWithAgeSignalError(result, error)
-                        }
-                    }
-            }
-            .addOnFailureListener { error ->
-                completeAgeSignalRequest(generation, result) {
-                    replyWithAgeSignalError(result, error)
-                }
-            }
-    }
-
-    private fun completeAgeSignalRequest(
-        generation: Int,
-        result: MethodChannel.Result,
-        reply: () -> Unit,
-    ) {
-        if (generation != ageSignalRequestGeneration || pendingAgeSignalResult !== result) return
-        pendingAgeSignalResult = null
-        reply()
-    }
-
-    private fun cancelAgeSignalRequest(result: MethodChannel.Result) {
-        // Play age-signals 0.0.4 exposes non-cancellable Tasks. Retain the
-        // original single flight rather than allowing an overlapping prompt.
-        result.success(false)
-    }
-
-    private fun restartForAgeSignal(result: MethodChannel.Result) {
-        val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
-        if (launchIntent == null) {
-            result.error("age_signal_restart_failed", "Buzz could not restart.", null)
-            return
-        }
-        result.success(false)
-        window.decorView.post {
-            launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-            startActivity(launchIntent)
-            finishAffinity()
-            Runtime.getRuntime().exit(0)
-        }
-    }
-
-    private fun replyWithAgeSignal(
-        result: MethodChannel.Result,
-        ageUpper: Int?,
-    ) {
-        result.success(ageSignalPayload(ageUpper))
-    }
-
-    private fun replyWithNoAgeSignal(result: MethodChannel.Result) {
-        result.success(noAgeSignalPayload())
     }
 
     override fun onRequestPermissionsResult(
